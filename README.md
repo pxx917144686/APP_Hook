@@ -7,6 +7,7 @@
   </h1>
 </div>
 
+<img width="1157" height="883" alt="x" src="https://github.com/user-attachments/assets/135c9db5-22e6-4880-9e0b-1bc2840d3f1a" />
 
 ## 内容解释
 
