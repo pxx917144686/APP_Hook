@@ -1,4 +1,3 @@
-
 Tweak.swift 主入口
 Hook.swift Hook 基础协议定义
 HookFunc.swift 函数 Hook 协议
@@ -14,6 +13,8 @@ ObserverHook.swift 支付检查 Hook
 DyldHook.swift 动态库名伪装 Hook
 ReceiptHook.swift 收据验证 Hook
 RebindHook.swift 重绑定 Hook
+URLHook.swift 网络验证拦截 Hook (Apple官方和第三方验证端点)
+第三方验证端点：/itunesreceipt, /validateReceipt, /users/validate
 
 
 数据模型
@@ -43,6 +44,5 @@ BindableGesture.swift 手势绑定
 Lock.swift 锁机制
 Ivar.swift 变量操作
 Rebind.swift 重绑定工具
-
 
 Package.swift - Swift包描述和配置
