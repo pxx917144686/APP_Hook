@@ -1,0 +1,9 @@
+Package: com.pxx917144686.satellajailed
+Name: SatellaJailed++
+Version: 0.0.1
+Architecture: iphoneos-arm64
+Description: Tweaks
+Maintainer: pxx917144686
+Author: pxx917144686
+Section: Tweaks
+Depends: mobilesubstrate, firmware (>= 15.0)
