@@ -335,4 +335,63 @@ extension URLHook {
         }
         return nil
     }
+    
+    // 处理 StoreKit 2 的服务器验证
+    private static func handleStoreKit2Verification(data: Data, response: URLResponse) -> Data? {
+        // 检查是否是 StoreKit 2 的 App Store Server API 请求
+        guard let url = response.url?.absoluteString,
+              url.contains("buy.itunes.apple.com") || url.contains("sandbox.itunes.apple.com") else {
+            return nil
+        }
+        
+        // 构造假的 StoreKit 2 响应
+        let fakeResponse = createStoreKit2Response()
+        return try? JSONSerialization.data(withJSONObject: fakeResponse)
+    }
+    
+    private static func createStoreKit2Response() -> [String: Any] {
+        return [
+            "signedTransactionInfo": createFakeJWS(),
+            "status": 0,
+            "environment": "Production",
+            "bundleId": Bundle.main.bundleIdentifier ?? ""
+        ]
+    }
+    
+    private static func createFakeJWS() -> String {
+        // 创建假的 JWS 签名
+        let header = ["alg": "ES256", "kid": "ABCDEF1234"]
+        
+        // 动态获取产品ID
+        let bundleId = Bundle.main.bundleIdentifier ?? "com.unknown.app"
+        let productId = "\(bundleId).premium"
+        
+        let payload = [
+            "productId": productId,
+            "originalTransactionId": "1000000000000000",
+            "transactionId": "1000000000000001", 
+            "purchaseDate": 1640995200000,
+            "expiresDate": 4092599349000, // 2099年
+            "inAppOwnershipType": "PURCHASED",
+            "subscriptionGroupIdentifier": generateSubscriptionGroupId(from: bundleId)
+        ] as [String: Any]
+        
+        return encodeJWS(header: header, payload: payload)
+    }
+    
+    private static func generateSubscriptionGroupId(from bundleId: String) -> String {
+        let hash = abs(bundleId.hashValue)
+        return String(format: "%010d", hash % 10000000000)
+    }
+    
+    private static func encodeJWS(header: [String: Any], payload: [String: Any]) -> String {
+        let headerData = try! JSONSerialization.data(withJSONObject: header)
+        let payloadData = try! JSONSerialization.data(withJSONObject: payload)
+        
+        let headerB64 = headerData.base64EncodedString()
+        let payloadB64 = payloadData.base64EncodedString()
+        let signature = "fake_signature_data"
+        
+        return "\(headerB64).\(payloadB64).\(signature)"
+    }
 }

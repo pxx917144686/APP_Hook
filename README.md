@@ -11,50 +11,88 @@
 
 ## 内容解释
 
-### 核心组件
-- `Tweak.swift` - 主入口
+### 核心入口
+- `Tweak.swift` - 主入口点和初始化
 - `Hook.swift` - Hook 基础协议定义
 - `HookFunc.swift` - 函数 Hook 协议
 - `HookGroup.swift` - Hook 组协议
 
-### 主要 Hook
-- `CanPayHook.swift` - 支付检测 Hook
+### StoreKit 1 Hook 模块
+- `CanPayHook.swift` - 支付能力检测 Hook
 - `DelegateHook.swift` - SKProductsRequest 代理 Hook
-- `TransactionHook.swift` - 支付状态 Hook
-- `ProductHook.swift` - 价格 Hook (0.00 价格)
-- `ObserverHook.swift` - 支付检查 Hook
-- `DyldHook.swift` - 动态库名伪装 Hook
+- `TransactionHook.swift` - 支付状态和交易 Hook
+- `ProductHook.swift` - APP价格 Hook (显示 0.00 价格)
+- `ObserverHook.swift` - 支付观察者 Hook
 - `ReceiptHook.swift` - 收据验证 Hook
-- `RebindHook.swift` - 重绑定 Hook
-- `URLHook.swift` - 网络验证拦截 Hook (支持 Apple 官方和第三方验证端点)
-  - `/itunesreceipt`
-  - `/validateReceipt`
-  - `/users/validate`
 
-### 数据模版
-- `Receipt.swift` - 收据数据结构
-- `ReceiptInfo.swift` - 收据信息
-- `ReceiptResponse.swift` - 收据响应
-- `OldReceipt.swift` - 旧版收据
+### StoreKit 2 Hook 模块 (iOS 15.0+)
+- `StoreKit2Hook.swift` - StoreKit2 Hook
+  - Transaction.currentEntitlements Hook
+  - Transaction.updates Hook  
+  - Product.purchase Hook
+  - VerificationResult Hook
+  - AppStore.requestReceipt Hook
+- `StoreKit2StorageHook.swift` - StoreKit 2 存储层 Hook
+  - SQLite 数据库操作拦截
+  - StoreKit 本地存储伪造
+  - 收据存储管理
+  - PAC 指针保护处理
+- `StoreKit2EntitlementHook.swift` - StoreKit 2 权益管理 Hook
+  - 订阅权益伪造
+  - 验证结果篡改
+  - 续费信息模拟
+
+### 系统级 Hook
+- `DyldHook.swift` - 动态库名伪装 Hook
+- `URLHook.swift` - 网络验证拦截 Hook
+  - Apple 官方验证端点拦截
+  - 第三方验证服务拦截
+  - 收据验证请求伪造
+
+### 重绑定工具
+- `RebindHook.swift` - 符号重绑定 Hook
+- `Rebind.swift` - 底层重绑定工具
+  - 动态符号解析
+  - 函数指针替换
+  - ARM64 指令修补
+
+### 数据模型
+- `Receipt.swift` - 现代收据数据结构
+- `ReceiptInfo.swift` - 收据详细信息
+- `ReceiptResponse.swift` - 收据验证响应
+- `OldReceipt.swift` - 旧版 StoreKit 收据
 - `OldReceiptInfo.swift` - 旧版收据信息
 
-### 服务类
+### 服务组件
 - `Delegate.swift` - SatellaDelegate APP 请求代理
-- `Observer.swift` - SatellaObserver 支付交易检测
-- `ReceiptGenerator.swift` - 收据生成器
+- `Observer.swift` - SatellaObserver 支付交易监听
+- `ReceiptGenerator.swift` - 动态收据生成器
+  - 假收据数据
+  - 签名模拟
+  - 过期时间
 
-### UI 界面
-- `SatellaView.swift` - SatellaView 主界面
-- `PreferencesView.swift` - 设置界面
-- `PassthroughView.swift` - 视图
+### 用户界面
+- `SatellaView.swift` - 主控制界面
+- `PreferencesView.swift` - 高级设置界面
+- `PassthroughView.swift` - 透明视图组件
 
-### 设置和工具
-- `Preferences.swift` - 偏好设置
-- `JinxPreferences.swift` - 配置读取
-- `BindableGesture.swift` - 手势绑定
-- `Lock.swift` - 锁机制
-- `Ivar.swift` - 变量操作
-- `Rebind.swift` - 重绑定工具
+### 配置管理
+- `Preferences.swift` - 用户偏好设置
+- `JinxPreferences.swift` - 配置文件读取
+  - Hook 总开关
+  - APP 产品 ID 配置
+  - 选项
+
+### 辅助工具
+- `BindableGesture.swift` - 手势绑定工具
+- `Lock.swift` - 线程安全锁机制
+- `Ivar.swift` - 运行时变量操作
+- `load.s` - ARM64 汇编加载器
+
+### 编译解释
+- `Package.swift` - Swift 包管理配置
+- `Makefile` - Theos 编译
+- `control` - Deb 包控制文件
 
 
 
