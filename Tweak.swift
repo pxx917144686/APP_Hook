@@ -16,12 +16,18 @@ struct Tweak {
             URLHook().hook()
         }
         
-        // StoreKit 2 hook
+        // StoreKit 2 hooks
         if #available(iOS 15.0, *) {
             if Preferences.isStoreKit2Enabled {
-                StoreKit2FunctionHook.hookStoreKit2Methods()
-                StoreKit2StorageHook().hook()
+                // 只使用已存在的Hook类
+                StoreKit2StorageHook().hook() 
                 StoreKit2EntitlementHook().hook()
+                
+                // 添加SQLite Hook
+                SQLiteHook().hook()
+                
+                // 如果需要通用SQLite Hook
+                SQLiteUniversalHook.hookAllSQLiteFunctions()
             }
         }
         

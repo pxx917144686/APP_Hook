@@ -97,4 +97,5 @@
 
 
 ## 编译
+- `cd SatellaJailed文件夹`
 - `make clean && make package`

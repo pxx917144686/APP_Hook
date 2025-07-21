@@ -87,7 +87,7 @@ struct StoreKit2StorageHook: StoreKit2HookProtocol {
         setupHookForPointer(pointer, symbol: symbol)
     }
     
-    // 修复 StoreKit2StorageHook 的指针问题
+    // StoreKit2StorageHook 的指针问题
     private func setupHookForPointer(_ pointer: UnsafeMutableRawPointer, symbol: String) {
         var originalPtr: UnsafeMutableRawPointer? = pointer
         
@@ -178,6 +178,59 @@ struct StoreKit2StorageHook: StoreKit2HookProtocol {
                 }
             }
         }
+    }
+    
+    // 创建假的交易集合
+    static func createFakeTransactionCollection() -> [[String: Any]] {
+        let currentTime = Int(Date().timeIntervalSince1970 * 1000) // 毫秒
+        let expirationTime = Int(Date().addingTimeInterval(365*24*3600).timeIntervalSince1970 * 1000) // 一年后
+        
+        return [
+            [
+                "id": "fake_transaction_\(UUID().uuidString)",
+                "productID": "premium.yearly",
+                "originalID": "fake_original_\(UUID().uuidString)",
+                "webOrderLineItemID": "fake_web_\(UUID().uuidString)",
+                "subscriptionGroupID": "premium_group",
+                "purchaseDate": currentTime,
+                "originalPurchaseDate": currentTime,
+                "expirationDate": expirationTime,
+                "revocationDate": NSNull(),
+                "revocationReason": NSNull(),
+                "isUpgraded": false,
+                "offerID": NSNull(),
+                "offerType": 0,
+                "appAccountToken": NSNull(),
+                "environment": "Production",
+                "storefront": "USA",
+                "storefrontID": "143441",
+                "price": 9.99,
+                "currency": "USD",
+                "paymentType": "paid"
+            ],
+            [
+                "id": "fake_transaction_monthly_\(UUID().uuidString)",
+                "productID": "premium.monthly",
+                "originalID": "fake_original_monthly_\(UUID().uuidString)",
+                "webOrderLineItemID": "fake_web_monthly_\(UUID().uuidString)",
+                "subscriptionGroupID": "premium_group",
+                "purchaseDate": currentTime,
+                "originalPurchaseDate": currentTime,
+                "expirationDate": Int(Date().addingTimeInterval(30*24*3600).timeIntervalSince1970 * 1000),
+                "revocationDate": NSNull(),
+                "revocationReason": NSNull(),
+                "isUpgraded": false,
+                "offerID": NSNull(),
+                "offerType": 0,
+                "appAccountToken": NSNull(),
+                "environment": "Production",
+                "storefront": "USA",
+                "storefrontID": "143441",
+                "price": 1.99,
+                "currency": "USD",
+                "paymentType": "paid"
+            ]
+        ]
     }
 }
 
@@ -273,7 +326,7 @@ func storeKitStorageReplacement() -> UnsafeMutableRawPointer? {
     print("[SatellaJailed] StoreKit存储被拦截")
     
     let fakeStorage = NSMutableDictionary()
-    fakeStorage["transactions"] = StoreKit2FunctionHook.createFakeTransactionCollection()
+    fakeStorage["transactions"] = StoreKit2StorageHook.createFakeTransactionCollection()
     fakeStorage["products"] = []
     fakeStorage["isValid"] = true
     
@@ -294,7 +347,7 @@ func receiptStorageReplacement() -> UnsafeMutableRawPointer? {
     return Unmanaged.passRetained(fakeReceipt as AnyObject).toOpaque()
 }
 
-// MARK: - 辅助函数
+// 辅助函数
 @available(iOS 15.0, *)
 func isStoreKitRelatedQuery(_ query: String) -> Bool {
     let storeKitKeywords = [
@@ -318,7 +371,7 @@ func isStoreKitRelatedQuery(_ query: String) -> Bool {
     return storeKitKeywords.contains { lowercaseQuery.contains($0) }
 }
 
-// MARK: - StoreKit2HookProtocol扩展
+// StoreKit2HookProtocol扩展
 @available(iOS 15.0, *)
 extension StoreKit2StorageHook {
     

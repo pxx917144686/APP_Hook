@@ -22,19 +22,15 @@ struct Preferences {
 }
 
 extension Preferences {
-    // StoreKit 2 相关
     static var isStoreKit2Enabled: Bool {
         get { UserDefaults.standard.bool(forKey: "sk2_enabled") }
         set { UserDefaults.standard.set(newValue, forKey: "sk2_enabled") }
     }
     
-    static var sk2ProductId: String {
-        get { UserDefaults.standard.string(forKey: "sk2_product_id") ?? "premium.full.per.year" }
-        set { UserDefaults.standard.set(newValue, forKey: "sk2_product_id") }
-    }
-    
-    static var sk2ExpirationDate: String {
-        get { UserDefaults.standard.string(forKey: "sk2_expiration") ?? "4092599349000" }
-        set { UserDefaults.standard.set(newValue, forKey: "sk2_expiration") }
+    // 默认启用 StoreKit 2 支持
+    static func setupDefaults() {
+        if UserDefaults.standard.object(forKey: "sk2_enabled") == nil {
+            UserDefaults.standard.set(true, forKey: "sk2_enabled")
+        }
     }
 }

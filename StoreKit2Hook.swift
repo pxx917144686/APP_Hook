@@ -1,437 +1,786 @@
 import Foundation
 import StoreKit
-import ObjectiveC
+import MachO
 
 @available(iOS 15.0, *)
-struct StoreKit2FunctionHook {
+class StoreKit2UniversalHook: Hook {
+    typealias T = @convention(c) () -> Void
+    var cls: AnyClass? { return nil }
+    var sel: Selector { return #selector(NSObject.description) }
+    var replace: T { return {} }
+
+    static var shared: StoreKit2UniversalHook?
     
-    static func hookStoreKit2Methods() {
-        hookCurrentEntitlements()
-        hookTransactionUpdates()
+    // C 函数指针
+    private let fakeCurrentEntitlements: @convention(c) () -> UnsafeMutableRawPointer = {
+        print("[StoreKit2] C Hook - currentEntitlements")
+        let fakeEntitlements = NSArray(array: [
+            ["productID": "premium.yearly", "expirationDate": Date().addingTimeInterval(365*24*3600)],
+            ["productID": "premium.monthly", "expirationDate": Date().addingTimeInterval(30*24*3600)],
+            ["productID": "premium.weekly", "expirationDate": Date().addingTimeInterval(7*24*3600)]
+        ])
+        return unsafeBitCast(fakeEntitlements, to: UnsafeMutableRawPointer.self)
+    }
+    
+    private let fakeVerificationResult: @convention(c) () -> UnsafeMutableRawPointer = {
+        print("[StoreKit2] C Hook - verificationResult")
+        let result = NSMutableDictionary()
+        result["verified"] = true
+        result["payloadData"] = Data()
+        return unsafeBitCast(result, to: UnsafeMutableRawPointer.self)
+    }
+    
+    private let fakePurchase: @convention(c) () -> UnsafeMutableRawPointer = {
+        print("[StoreKit2] C Hook - purchase")
+        let result = NSMutableDictionary()
+        result["transaction"] = [
+            "id": "fake_transaction_\(UUID().uuidString)",
+            "productID": "premium.subscription",
+            "purchaseDate": Date(),
+            "state": 1
+        ]
+        result["userCancelled"] = false
+        return unsafeBitCast(result, to: UnsafeMutableRawPointer.self)
+    }
+    
+    private let fakeSubscriptionStatus: @convention(c) () -> UnsafeMutableRawPointer = {
+        print("[StoreKit2] C Hook - subscriptionStatus")
+        let status = NSMutableDictionary()
+        status["state"] = 1
+        status["renewalInfo"] = [
+            "willAutoRenew": true,
+            "expirationDate": Date().addingTimeInterval(365*24*3600),
+            "autoRenewProductID": "premium.subscription"
+        ]
+        return unsafeBitCast(status, to: UnsafeMutableRawPointer.self)
+    }
+    
+    private let fakeDefault: @convention(c) () -> UnsafeMutableRawPointer = {
+        print("[StoreKit2] C Hook - default")
+        return unsafeBitCast(NSNumber(value: true), to: UnsafeMutableRawPointer.self)
+    }
+    
+    private let fakeSQLiteExec: @convention(c) (OpaquePointer?, UnsafePointer<CChar>?, UnsafeMutableRawPointer?, UnsafeMutableRawPointer?, UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?) -> Int32 = { db, sql, callback, callbackArg, errmsg in
+        if let sqlString = sql {
+            let query = String(cString: sqlString)
+            print("[StoreKit2] SQLite exec: \(query)")
+            
+            if query.lowercased().contains("transaction") || query.lowercased().contains("purchase") || 
+               query.lowercased().contains("subscription") || query.lowercased().contains("receipt") {
+                print("[StoreKit2] Intercepted StoreKit SQLite query")
+                return 0
+            }
+        }
+        return 0
+    }
+    
+    private let fakeSQLiteStep: @convention(c) (OpaquePointer?) -> Int32 = { stmt in
+        print("[StoreKit2] SQLite step intercepted")
+        return 101
+    }
+    
+    private let fakeSQLitePrepare: @convention(c) (OpaquePointer?, UnsafePointer<CChar>?, Int32, UnsafeMutablePointer<OpaquePointer?>?, UnsafeMutablePointer<UnsafePointer<CChar>?>?) -> Int32 = { db, sql, nByte, ppStmt, pzTail in
+        if let sqlString = sql {
+            let query = String(cString: sqlString)
+            print("[StoreKit2] SQLite prepare: \(query)")
+        }
+        return 0
+    }
+    
+    private let fakeOpen: @convention(c) (UnsafePointer<CChar>?, Int32, Int32) -> Int32 = { path, flags, mode in
+        if let pathString = path {
+            let pathStr = String(cString: pathString)
+            print("[StoreKit2] File open: \(pathStr)")
+            
+            if pathStr.contains("StoreKit") || pathStr.contains("transaction") || 
+               pathStr.contains("receipt") || pathStr.contains("purchase") {
+                print("[StoreKit2] Intercepted StoreKit file access")
+                return -1
+            }
+        }
+        return 0
+    }
+    
+    private let fakeFOpen: @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> UnsafeMutablePointer<FILE>? = { filename, mode in
+        if let filenameString = filename {
+            let filenameStr = String(cString: filenameString)
+            print("[StoreKit2] File fopen: \(filenameStr)")
+            
+            if filenameStr.contains("StoreKit") || filenameStr.contains("transaction") ||
+               filenameStr.contains("receipt") || filenameStr.contains("purchase") {
+                print("[StoreKit2] Intercepted StoreKit file fopen")
+                return nil
+            }
+        }
+        return nil
+    }
+    
+    private let fakeRead: @convention(c) (Int32, UnsafeMutableRawPointer?, Int) -> Int = { fd, buf, count in
+        print("[StoreKit2] File read intercepted: fd=\(fd), count=\(count)")
+        return 0
+    }
+    
+    private let fakeFRead: @convention(c) (UnsafeMutableRawPointer?, Int, Int, UnsafeMutablePointer<FILE>?) -> Int = { ptr, size, nmemb, stream in
+        print("[StoreKit2] File fread intercepted: size=\(size), nmemb=\(nmemb)")
+        return 0
+    }
+    
+    func hook() {
+        StoreKit2UniversalHook.shared = self
+        
+        hookTransactionVerification()
         hookProductPurchase()
-        hookVerificationResult()
-        hookReceiptRefresh()
+        hookSubscriptionStatus()
+        hookSQLiteOperations()
+        hookNetworkValidation()
+        hookRuntimeMethods()
+        hookSwiftRuntimeClasses()
     }
     
-    private static func hookCurrentEntitlements() {
-        let originalSymbol = "_$s8StoreKit11TransactionV19currentEntitlementsAC12TransactionsVvgZ"
+    private func hookTransactionVerification() {
+        hookSwiftMethod(moduleName: "StoreKit", className: "Transaction", methodName: "currentEntitlements")
+        hookSwiftMethod(moduleName: "StoreKit", className: "Transaction", methodName: "verificationResult")
+        hookSwiftMethod(moduleName: "StoreKit", className: "VerificationResult", methodName: "get")
         
-        guard let handle = dlopen(nil, RTLD_NOW),
-              let originalFunc = dlsym(handle, originalSymbol) else { 
-            print("[SatellaJailed] 无法找到currentEntitlements符号")
-            return 
+        if let transactionClass = objc_getClass("StoreKit.Transaction") as? AnyClass {
+            hookObjCMethod(class: transactionClass, selector: "currentEntitlements", implementation: fakeCurrentEntitlementsObjC)
+            hookObjCMethod(class: transactionClass, selector: "verificationResult", implementation: fakeVerificationResultObjC)
+        }
+    }
+    
+    private func hookProductPurchase() {
+        hookSwiftMethod(moduleName: "StoreKit", className: "Product", methodName: "purchase")
+        hookSwiftMethod(moduleName: "StoreKit", className: "Product", methodName: "subscription")
+        
+        if let productClass = objc_getClass("StoreKit.Product") as? AnyClass {
+            hookObjCMethod(class: productClass, selector: "purchase", implementation: fakePurchaseObjC)
+            hookObjCMethod(class: productClass, selector: "subscription", implementation: fakeSubscriptionObjC)
+        }
+    }
+    
+    private func hookSubscriptionStatus() {
+        hookSwiftMethod(moduleName: "StoreKit", className: "SubscriptionInfo", methodName: "status")
+        hookSwiftMethod(moduleName: "StoreKit", className: "RenewalInfo", methodName: "willAutoRenew")
+        
+        if let subscriptionClass = objc_getClass("StoreKit.Product.SubscriptionInfo") as? AnyClass {
+            hookObjCMethod(class: subscriptionClass, selector: "status", implementation: fakeSubscriptionStatusObjC)
         }
         
-        var originalPtr: UnsafeMutableRawPointer? = UnsafeMutableRawPointer(mutating: originalFunc)
+        if let renewalClass = objc_getClass("StoreKit.Product.SubscriptionInfo.RenewalInfo") as? AnyClass {
+            hookObjCMethod(class: renewalClass, selector: "willAutoRenew", implementation: fakeWillAutoRenewObjC)
+        }
+    }
+    
+    private func hookSwiftRuntimeClasses() {
+        let swiftClassNames = [
+            "_TtC8StoreKit11Transaction",
+            "_TtC8StoreKit7Product", 
+            "_TtC8StoreKit18VerificationResult",
+            "_TtC8StoreKit16SubscriptionInfo",
+            "_TtC8StoreKit11RenewalInfo"
+        ]
         
-        withUnsafeMutablePointer(to: &originalPtr) { ptr in
-            let hook = RebindHook(
-                name: "currentEntitlements",
-                replace: unsafeBitCast(currentEntitlementsReplacement, to: UnsafeMutableRawPointer.self),
-                orig: ptr
-            )
-            
-            if !Rebind(hook: hook).rebind() {
-                print("[SatellaJailed] CurrentEntitlements Hook 失败")
-            } else {
-                print("[SatellaJailed] CurrentEntitlements Hook 成功")
+        for className in swiftClassNames {
+            if let swiftClass = objc_getClass(className) as? AnyClass {
+                let methodCount = UnsafeMutablePointer<UInt32>.allocate(capacity: 1)
+                if let methods = class_copyMethodList(swiftClass, methodCount) {
+                    for i in 0..<Int(methodCount.pointee) {
+                        let method = methods[i]
+                        let selector = method_getName(method)
+                        let selectorName = NSStringFromSelector(selector)
+                        
+                        if selectorName.contains("entitlements") || selectorName.contains("verification") || 
+                           selectorName.contains("purchase") || selectorName.contains("subscription") ||
+                           selectorName.contains("status") || selectorName.contains("renew") {
+                            
+                            let newImpl = createFakeImplementation(for: selectorName)
+                            method_setImplementation(method, newImpl)
+                            
+                            print("[StoreKit2] Hooked Swift method: \(className).\(selectorName)")
+                        }
+                    }
+                    free(methods)
+                }
+                methodCount.deallocate()
             }
         }
     }
     
-    private static func hookTransactionUpdates() {
-        let originalSymbol = "_$s8StoreKit11TransactionV7updatesAC12TransactionsVvgZ"
-        
-        guard let handle = dlopen(nil, RTLD_NOW),
-              let originalFunc = dlsym(handle, originalSymbol) else { 
-            print("[SatellaJailed] 无法找到updates符号")
-            return 
+    private func createFakeImplementation(for selectorName: String) -> IMP {
+        if selectorName.contains("entitlements") {
+            return imp_implementationWithBlock({ () -> Any in
+                print("[StoreKit2] Fake entitlements called")
+                return self.createFakeEntitlements()
+            })
+        } else if selectorName.contains("verification") {
+            return imp_implementationWithBlock({ () -> Any in
+                print("[StoreKit2] Fake verification called")
+                return self.createFakeVerificationResult()
+            })
+        } else if selectorName.contains("purchase") {
+            return imp_implementationWithBlock({ () -> Any in
+                print("[StoreKit2] Fake purchase called")
+                return self.createFakePurchaseResult()
+            })
+        } else if selectorName.contains("subscription") {
+            return imp_implementationWithBlock({ () -> Any in
+                print("[StoreKit2] Fake subscription called")
+                return self.createFakeSubscriptionInfo()
+            })
+        } else if selectorName.contains("status") {
+            return imp_implementationWithBlock({ () -> Any in
+                print("[StoreKit2] Fake status called")
+                return self.createFakeSubscriptionStatus()
+            })
+        } else if selectorName.contains("renew") {
+            return imp_implementationWithBlock({ () -> Bool in
+                print("[StoreKit2] Fake auto renew called")
+                return true
+            })
         }
         
-        var originalPtr: UnsafeMutableRawPointer? = UnsafeMutableRawPointer(mutating: originalFunc)
+        return imp_implementationWithBlock({ () -> Any in
+            print("[StoreKit2] Default fake implementation called")
+            return NSNumber(value: true)
+        })
+    }
+    
+    private func hookSwiftMethod(moduleName: String, className: String, methodName: String) {
+        let symbols = [
+            "_$s\(moduleName.count)\(moduleName)\(className.count)\(className)\(methodName.count)\(methodName)",
+            "$s\(moduleName.count)\(moduleName)\(className.count)\(className)\(methodName.count)\(methodName)",
+            "\(moduleName).\(className).\(methodName)"
+        ]
         
-        withUnsafeMutablePointer(to: &originalPtr) { ptr in
-            let hook = RebindHook(
-                name: "updates",
-                replace: unsafeBitCast(transactionUpdatesReplacement, to: UnsafeMutableRawPointer.self),
-                orig: ptr
-            )
-            
-            if !Rebind(hook: hook).rebind() {
-                print("[SatellaJailed] Transaction.updates Hook 失败")
-            } else {
-                print("[SatellaJailed] Transaction.updates Hook 成功")
+        for symbol in symbols {
+            if let address = dlsym(dlopen(nil, RTLD_NOW), symbol) {
+                print("[StoreKit2] Found symbol: \(symbol)")
+                hookFunctionAtAddress(address: address, symbol: symbol)
+                break
             }
         }
     }
     
-    private static func hookProductPurchase() {
-        let purchaseSymbol = "_$s8StoreKit7ProductV8purchase7optionsAC14PurchaseResultOShyAC0F6OptionVG_tYaKF"
+    private func hookFunctionAtAddress(address: UnsafeMutableRawPointer, symbol: String) {
+        let pageSize = Int(getpagesize())
+        let alignedAddress = UnsafeMutableRawPointer(bitPattern: UInt(bitPattern: address) & ~UInt(pageSize - 1))
         
-        guard let handle = dlopen(nil, RTLD_NOW),
-              let purchaseFunc = dlsym(handle, purchaseSymbol) else { 
-            print("[SatellaJailed] 无法找到purchase符号")
-            return 
+        if let alignedAddr = alignedAddress, mprotect(alignedAddr, pageSize, PROT_READ | PROT_WRITE | PROT_EXEC) == 0 {
+            createJumpInstruction(at: address, to: getFakeImplementation(for: symbol))
+            mprotect(alignedAddr, pageSize, PROT_READ | PROT_EXEC)
+            print("[StoreKit2] Successfully hooked symbol: \(symbol)")
+        }
+    }
+    
+    private func getFakeImplementation(for symbol: String) -> UnsafeMutableRawPointer {
+        if symbol.contains("currentEntitlements") {
+            return unsafeBitCast(fakeCurrentEntitlements, to: UnsafeMutableRawPointer.self)
+        } else if symbol.contains("verificationResult") {
+            return unsafeBitCast(fakeVerificationResult, to: UnsafeMutableRawPointer.self)
+        } else if symbol.contains("purchase") {
+            return unsafeBitCast(fakePurchase, to: UnsafeMutableRawPointer.self)
+        } else if symbol.contains("status") {
+            return unsafeBitCast(fakeSubscriptionStatus, to: UnsafeMutableRawPointer.self)
         }
         
-        var originalPtr: UnsafeMutableRawPointer? = UnsafeMutableRawPointer(mutating: purchaseFunc)
+        return unsafeBitCast(fakeDefault, to: UnsafeMutableRawPointer.self)
+    }
+    
+    private func createJumpInstruction(at address: UnsafeMutableRawPointer, to target: UnsafeMutableRawPointer) {
+        #if arch(arm64)
+        let offset = Int64(Int(bitPattern: target)) - Int64(Int(bitPattern: address))
+        let instruction: UInt32 = 0x14000000 | UInt32((offset >> 2) & 0x3FFFFFF)
+        address.assumingMemoryBound(to: UInt32.self).pointee = instruction
+        #elseif arch(x86_64)
+        address.assumingMemoryBound(to: UInt8.self).pointee = 0xE9
+        let offset = Int32(Int(bitPattern: target)) - Int32(Int(bitPattern: address)) - 5
+        (address + 1).assumingMemoryBound(to: Int32.self).pointee = offset
+        #endif
+    }
+    
+    private func hookSQLiteOperations() {
+        let sqliteFunctions = ["sqlite3_exec", "sqlite3_prepare_v2", "sqlite3_step", "sqlite3_column_text"]
         
-        withUnsafeMutablePointer(to: &originalPtr) { ptr in
-            let hook = RebindHook(
-                name: "purchase",
-                replace: unsafeBitCast(productPurchaseReplacement, to: UnsafeMutableRawPointer.self),
-                orig: ptr
-            )
-            
-            if !Rebind(hook: hook).rebind() {
-                print("[SatellaJailed] Product.purchase Hook 失败")
-            } else {
-                print("[SatellaJailed] Product.purchase Hook 成功")
+        for funcName in sqliteFunctions {
+            if let original = dlsym(dlopen(nil, RTLD_NOW), funcName) {
+                print("[StoreKit2] Found SQLite function: \(funcName)")
+                hookSQLiteFunction(name: funcName, original: original)
+            }
+        }
+        
+        hookFileOperations()
+    }
+    
+    private func hookSQLiteFunction(name: String, original: UnsafeMutableRawPointer) {
+        switch name {
+        case "sqlite3_exec":
+            swapSQLiteExecFunction(original: original)
+        case "sqlite3_step":
+            swapSQLiteStepFunction(original: original)
+        case "sqlite3_prepare_v2":
+            swapSQLitePrepareFunction(original: original)
+        default:
+            break
+        }
+    }
+    
+    private func swapSQLiteExecFunction(original: UnsafeMutableRawPointer) {
+        let pageSize = Int(getpagesize())
+        let alignedAddress = UnsafeMutableRawPointer(bitPattern: UInt(bitPattern: original) & ~UInt(pageSize - 1))
+        
+        if let alignedAddr = alignedAddress, mprotect(alignedAddr, pageSize, PROT_READ | PROT_WRITE | PROT_EXEC) == 0 {
+            let fakeFunc = unsafeBitCast(fakeSQLiteExec, to: UnsafeMutableRawPointer.self)
+            createJumpInstruction(at: original, to: fakeFunc)
+            mprotect(alignedAddr, pageSize, PROT_READ | PROT_EXEC)
+            print("[StoreKit2] Hooked sqlite3_exec")
+        }
+    }
+    
+    private func swapSQLiteStepFunction(original: UnsafeMutableRawPointer) {
+        let pageSize = Int(getpagesize())
+        let alignedAddress = UnsafeMutableRawPointer(bitPattern: UInt(bitPattern: original) & ~UInt(pageSize - 1))
+        
+        if let alignedAddr = alignedAddress, mprotect(alignedAddr, pageSize, PROT_READ | PROT_WRITE | PROT_EXEC) == 0 {
+            let fakeFunc = unsafeBitCast(fakeSQLiteStep, to: UnsafeMutableRawPointer.self)
+            createJumpInstruction(at: original, to: fakeFunc)
+            mprotect(alignedAddr, pageSize, PROT_READ | PROT_EXEC)
+            print("[StoreKit2] Hooked sqlite3_step")
+        }
+    }
+    
+    private func swapSQLitePrepareFunction(original: UnsafeMutableRawPointer) {
+        let pageSize = Int(getpagesize())
+        let alignedAddress = UnsafeMutableRawPointer(bitPattern: UInt(bitPattern: original) & ~UInt(pageSize - 1))
+        
+        if let alignedAddr = alignedAddress, mprotect(alignedAddr, pageSize, PROT_READ | PROT_WRITE | PROT_EXEC) == 0 {
+            let fakeFunc = unsafeBitCast(fakeSQLitePrepare, to: UnsafeMutableRawPointer.self)
+            createJumpInstruction(at: original, to: fakeFunc)
+            mprotect(alignedAddr, pageSize, PROT_READ | PROT_EXEC)
+            print("[StoreKit2] Hooked sqlite3_prepare_v2")
+        }
+    }
+    
+    private func hookFileOperations() {
+        let fileSystemFunctions = ["open", "read", "write", "fopen", "fread", "fwrite"]
+        
+        for funcName in fileSystemFunctions {
+            if let original = dlsym(dlopen(nil, RTLD_NOW), funcName) {
+                print("[StoreKit2] Found file system function: \(funcName)")
+                hookFileSystemFunction(name: funcName, original: original)
             }
         }
     }
     
-    private static func hookVerificationResult() {
-        print("[SatellaJailed] VerificationResult钩子已设置")
-        
-        // 使用Method Swizzling方式处理VerificationResult
-        guard let verificationClass = NSClassFromString("StoreKit.VerificationResult") else {
-            print("[SatellaJailed] 无法找到VerificationResult类")
-            return
-        }
-        
-        print("[SatellaJailed] VerificationResult类已找到: \(verificationClass)")
-        
-        // Hook VerificationResult的验证逻辑
-        hookVerificationResultMethods(verificationClass)
-    }
-    
-    private static func hookVerificationResultMethods(_ verificationClass: AnyClass) {
-        // Hook .verified 静态方法
-        if let verifiedMethod = class_getClassMethod(verificationClass, NSSelectorFromString("verified:")) {
-            method_setImplementation(verifiedMethod, unsafeBitCast(verificationResultVerifiedReplacement, to: IMP.self))
-            print("[SatellaJailed] VerificationResult.verified方法已被Hook")
-        }
-        
-        // Hook .unverified 静态方法，让其返回verified结果
-        if let unverifiedMethod = class_getClassMethod(verificationClass, NSSelectorFromString("unverified:")) {
-            method_setImplementation(unverifiedMethod, unsafeBitCast(verificationResultUnverifiedReplacement, to: IMP.self))
-            print("[SatellaJailed] VerificationResult.unverified方法已被Hook")
+    private func hookFileSystemFunction(name: String, original: UnsafeMutableRawPointer) {
+        switch name {
+        case "open":
+            swapOpenFunction(original: original)
+        case "fopen":
+            swapFOpenFunction(original: original)
+        case "read":
+            swapReadFunction(original: original)
+        case "fread":
+            swapFReadFunction(original: original)
+        default:
+            break
         }
     }
     
-    private static func hookReceiptRefresh() {
-        print("[SatellaJailed] ReceiptRefresh钩子已设置")
+    private func swapOpenFunction(original: UnsafeMutableRawPointer) {
+        let pageSize = Int(getpagesize())
+        let alignedAddress = UnsafeMutableRawPointer(bitPattern: UInt(bitPattern: original) & ~UInt(pageSize - 1))
         
-        // Hook AppStore的收据刷新请求
-        let receiptRefreshSymbol = "_$s8StoreKit03AppA0O12requestReceiptyyYaKFZ"
+        if let alignedAddr = alignedAddress, mprotect(alignedAddr, pageSize, PROT_READ | PROT_WRITE | PROT_EXEC) == 0 {
+            let fakeFunc = unsafeBitCast(fakeOpen, to: UnsafeMutableRawPointer.self)
+            createJumpInstruction(at: original, to: fakeFunc)
+            mprotect(alignedAddr, pageSize, PROT_READ | PROT_EXEC)
+            print("[StoreKit2] Hooked open")
+        }
+    }
+    
+    private func swapFOpenFunction(original: UnsafeMutableRawPointer) {
+        let pageSize = Int(getpagesize())
+        let alignedAddress = UnsafeMutableRawPointer(bitPattern: UInt(bitPattern: original) & ~UInt(pageSize - 1))
         
-        guard let handle = dlopen(nil, RTLD_NOW),
-              let receiptFunc = dlsym(handle, receiptRefreshSymbol) else {
-            print("[SatellaJailed] 无法找到receipt refresh符号")
-            return
+        if let alignedAddr = alignedAddress, mprotect(alignedAddr, pageSize, PROT_READ | PROT_WRITE | PROT_EXEC) == 0 {
+            let fakeFunc = unsafeBitCast(fakeFOpen, to: UnsafeMutableRawPointer.self)
+            createJumpInstruction(at: original, to: fakeFunc)
+            mprotect(alignedAddr, pageSize, PROT_READ | PROT_EXEC)
+            print("[StoreKit2] Hooked fopen")
+        }
+    }
+    
+    private func swapReadFunction(original: UnsafeMutableRawPointer) {
+        let pageSize = Int(getpagesize())
+        let alignedAddress = UnsafeMutableRawPointer(bitPattern: UInt(bitPattern: original) & ~UInt(pageSize - 1))
+        
+        if let alignedAddr = alignedAddress, mprotect(alignedAddr, pageSize, PROT_READ | PROT_WRITE | PROT_EXEC) == 0 {
+            let fakeFunc = unsafeBitCast(fakeRead, to: UnsafeMutableRawPointer.self)
+            createJumpInstruction(at: original, to: fakeFunc)
+            mprotect(alignedAddr, pageSize, PROT_READ | PROT_EXEC)
+            print("[StoreKit2] Hooked read")
+        }
+    }
+    
+    private func swapFReadFunction(original: UnsafeMutableRawPointer) {
+        let pageSize = Int(getpagesize())
+        let alignedAddress = UnsafeMutableRawPointer(bitPattern: UInt(bitPattern: original) & ~UInt(pageSize - 1))
+        
+        if let alignedAddr = alignedAddress, mprotect(alignedAddr, pageSize, PROT_READ | PROT_WRITE | PROT_EXEC) == 0 {
+            let fakeFunc = unsafeBitCast(fakeFRead, to: UnsafeMutableRawPointer.self)
+            createJumpInstruction(at: original, to: fakeFunc)
+            mprotect(alignedAddr, pageSize, PROT_READ | PROT_EXEC)
+            print("[StoreKit2] Hooked fread")
+        }
+    }
+    
+    private func hookNetworkValidation() {
+        if let urlConnectionClass = NSClassFromString("NSURLConnection") {
+            hookObjCMethod(
+                class: urlConnectionClass,
+                selector: "sendAsynchronousRequest:queue:completionHandler:",
+                implementation: fakeURLConnection
+            )
         }
         
-        var originalPtr: UnsafeMutableRawPointer? = UnsafeMutableRawPointer(mutating: receiptFunc)
+        if let urlSessionClass = NSClassFromString("NSURLSession") {
+            hookObjCMethod(
+                class: urlSessionClass,
+                selector: "dataTaskWithRequest:completionHandler:",
+                implementation: fakeURLSessionDataTask
+            )
+        }
         
-        withUnsafeMutablePointer(to: &originalPtr) { ptr in
-            let hook = RebindHook(
-                name: "requestReceipt",
-                replace: unsafeBitCast(receiptRefreshReplacement, to: UnsafeMutableRawPointer.self),
-                orig: ptr
+        if let cfNetworkClass = NSClassFromString("__NSCFURLSessionDataTask") {
+            hookObjCMethod(
+                class: cfNetworkClass,
+                selector: "resume",
+                implementation: fakeURLTaskResume
+            )
+        }
+    }
+    
+    private func hookRuntimeMethods() {
+        if let userDefaultsClass = NSClassFromString("NSUserDefaults") {
+            hookObjCMethod(
+                class: userDefaultsClass,
+                selector: "objectForKey:",
+                implementation: fakeUserDefaultsObjectForKey
             )
             
-            if !Rebind(hook: hook).rebind() {
-                print("[SatellaJailed] Receipt refresh Hook 失败")
-            } else {
-                print("[SatellaJailed] Receipt refresh Hook 成功")
-            }
+            hookObjCMethod(
+                class: userDefaultsClass,
+                selector: "boolForKey:",
+                implementation: fakeUserDefaultsBoolForKey
+            )
+            
+            hookObjCMethod(
+                class: userDefaultsClass,
+                selector: "dataForKey:",
+                implementation: fakeUserDefaultsDataForKey
+            )
+        }
+        
+        if let unarchiverClass = NSClassFromString("NSKeyedUnarchiver") {
+            hookObjCMethod(
+                class: unarchiverClass,
+                selector: "unarchiveObjectWithData:",
+                implementation: fakeUnarchiveObjectWithData
+            )
+            
+            hookObjCMethod(
+                class: unarchiverClass,
+                selector: "unarchivedObjectOfClass:fromData:error:",
+                implementation: fakeUnarchivedObjectOfClass
+            )
+        }
+        
+        if let keychainClass = NSClassFromString("SecItem") {
+            hookObjCMethod(
+                class: keychainClass,
+                selector: "copyMatching:",
+                implementation: fakeKeychainCopyMatching
+            )
         }
     }
     
-    // 获取当前配置的产品ID列表
-    static func getConfiguredProductIds() -> [String] {
+    private func hookObjCMethod(class: AnyClass, selector: String, implementation: Any) {
+        let selectorObj = NSSelectorFromString(selector)
+        if let method = class_getInstanceMethod(`class`, selectorObj) {
+            let newIMP = imp_implementationWithBlock(implementation)
+            method_setImplementation(method, newIMP)
+            print("[StoreKit2] Successfully hooked \(`class`).\(selector)")
+        }
+    }
+}
+
+// MARK: - Objective-C 方法实现
+@available(iOS 15.0, *)
+extension StoreKit2UniversalHook {
+    private func fakeCurrentEntitlementsObjC() -> Any {
+        print("[StoreKit2] ObjC Hook - currentEntitlements")
+        return createFakeEntitlements()
+    }
+    
+    private func fakeVerificationResultObjC() -> Any {
+        print("[StoreKit2] ObjC Hook - verificationResult")
+        return createFakeVerificationResult()
+    }
+    
+    private func fakePurchaseObjC() -> Any {
+        print("[StoreKit2] ObjC Hook - purchase")
+        return createFakePurchaseResult()
+    }
+    
+    private func fakeSubscriptionObjC() -> Any {
+        print("[StoreKit2] ObjC Hook - subscription")
+        return createFakeSubscriptionInfo()
+    }
+    
+    private func fakeSubscriptionStatusObjC() -> Any {
+        print("[StoreKit2] ObjC Hook - subscriptionStatus")
+        return createFakeSubscriptionStatus()
+    }
+    
+    private func fakeWillAutoRenewObjC() -> Bool {
+        print("[StoreKit2] ObjC Hook - willAutoRenew")
+        return true
+    }
+    
+    private func fakeURLConnection() -> Any {
+        print("[StoreKit2] Intercepted NSURLConnection request")
+        return createFakeNetworkResponse()
+    }
+    
+    private func fakeURLSessionDataTask() -> Any {
+        print("[StoreKit2] Intercepted NSURLSession request")
+        return createFakeNetworkResponse()
+    }
+    
+    private func fakeURLTaskResume() -> Void {
+        print("[StoreKit2] Intercepted URLTask resume")
+    }
+    
+    private func fakeUserDefaultsObjectForKey() -> Any? {
+        print("[StoreKit2] Intercepted NSUserDefaults objectForKey")
+        return createFakeUserDefaultsValue()
+    }
+    
+    private func fakeUserDefaultsBoolForKey() -> Bool {
+        print("[StoreKit2] Intercepted NSUserDefaults boolForKey")
+        return true
+    }
+    
+    private func fakeUserDefaultsDataForKey() -> Data? {
+        print("[StoreKit2] Intercepted NSUserDefaults dataForKey")
+        return createFakeReceiptData()
+    }
+    
+    private func fakeUnarchiveObjectWithData() -> Any? {
+        print("[StoreKit2] Intercepted NSKeyedUnarchiver unarchiveObjectWithData")
+        return createFakeArchivedObject()
+    }
+    
+    private func fakeUnarchivedObjectOfClass() -> Any? {
+        print("[StoreKit2] Intercepted NSKeyedUnarchiver unarchivedObjectOfClass")
+        return createFakeArchivedObject()
+    }
+    
+    private func fakeKeychainCopyMatching() -> OSStatus {
+        print("[StoreKit2] Intercepted Keychain access")
+        return noErr
+    }
+    
+    private func createFakeEntitlements() -> [String: Any] {
         return [
-            "premium.full.per.year",
-            "premium.yearly", 
-            "pro.yearly",
-            "vip.yearly",
-            "subscription.yearly",
-            "premium.monthly",
-            "pro.monthly",
-            "unlock.full",
-            "all.features",
-            "premium",
-            "pro",
-            "vip"
+            "currentEntitlements": [
+                [
+                    "productID": "premium.yearly",
+                    "expirationDate": Date().addingTimeInterval(365*24*3600),
+                    "transactionID": "fake_transaction_yearly_\(UUID().uuidString)",
+                    "originalTransactionID": "fake_original_yearly_\(UUID().uuidString)",
+                    "subscriptionGroupID": "premium_group",
+                    "webOrderLineItemID": "fake_web_\(UUID().uuidString)"
+                ],
+                [
+                    "productID": "premium.monthly", 
+                    "expirationDate": Date().addingTimeInterval(30*24*3600),
+                    "transactionID": "fake_transaction_monthly_\(UUID().uuidString)",
+                    "originalTransactionID": "fake_original_monthly_\(UUID().uuidString)",
+                    "subscriptionGroupID": "premium_group",
+                    "webOrderLineItemID": "fake_web_\(UUID().uuidString)"
+                ]
+            ]
         ]
     }
     
-    /// 创建包含有效订阅的假Transaction.Transactions集合
-    static func createFakeTransactionCollection() -> Any {
-        let fakeCollection = NSMutableArray()
-        
-        for productId in getConfiguredProductIds() {
-            let fakeTransaction = createFakeTransaction(productId: productId)
-            fakeCollection.add(fakeTransaction)
-        }
-        
-        print("[SatellaJailed] 已创建包含\(fakeCollection.count)个交易的伪造集合")
-        return fakeCollection
-    }
-    
-    /// 创建单个伪造交易
-    static func createFakeTransaction(productId: String) -> Any {
-        let transaction = NSMutableDictionary()
-        
-        // 设置基本交易信息
-        transaction["productId"] = productId
-        transaction["transactionId"] = "fake_\(arc4random())"
-        transaction["originalTransactionId"] = "fake_original_\(arc4random())"
-        transaction["purchaseDate"] = Date()
-        transaction["expirationDate"] = Date().addingTimeInterval(86400 * 365) // 一年后过期
-        transaction["isActive"] = true
-        transaction["environment"] = "Production"
-        transaction["webOrderLineItemId"] = "fake_\(arc4random())"
-        transaction["subscriptionGroupIdentifier"] = "premium_group"
-        
-        print("[SatellaJailed] 已创建伪造交易: \(productId)")
-        return transaction
-    }
-    
-    // 创建伪造交易指针
-    static func createFakeTransactions() -> UnsafeMutableRawPointer? {
-        let fakeData = createFakeTransactionCollection()
-        return Unmanaged.passRetained(fakeData as AnyObject).toOpaque()
-    }
-    
-    // 创建成功的购买结果
-    static func createSuccessfulPurchaseResult() -> UnsafeMutableRawPointer? {
-        let successResult = NSMutableDictionary()
-        successResult["status"] = "success"
-        successResult["transaction"] = createFakeTransaction(productId: "purchased_product")
-        successResult["verificationResult"] = "verified"
-        successResult["userCancelled"] = false
-        successResult["pending"] = false
-        
-        print("[SatellaJailed] 已创建成功的购买结果")
-        return Unmanaged.passRetained(successResult as AnyObject).toOpaque()
-    }
-}
-
-// 全局替换函数
-@available(iOS 15.0, *)
-@_cdecl("currentEntitlementsReplacement")
-func currentEntitlementsReplacement() -> UnsafeMutableRawPointer {
-    print("[SatellaJailed] CurrentEntitlements被拦截")
-    let fakeData = StoreKit2FunctionHook.createFakeTransactionCollection()
-    return Unmanaged.passRetained(fakeData as AnyObject).toOpaque()
-}
-
-@available(iOS 15.0, *)
-@_cdecl("transactionUpdatesReplacement")
-func transactionUpdatesReplacement() -> UnsafeMutableRawPointer? {
-    print("[SatellaJailed] Transaction.updates被拦截")
-    return StoreKit2FunctionHook.createFakeTransactions()
-}
-
-@available(iOS 15.0, *)
-@_cdecl("productPurchaseReplacement")
-func productPurchaseReplacement(_ product: UnsafeMutableRawPointer, _ options: UnsafeMutableRawPointer) -> UnsafeMutableRawPointer? {
-    print("[SatellaJailed] Product.purchase被拦截")
-    return StoreKit2FunctionHook.createSuccessfulPurchaseResult()
-}
-
-@available(iOS 15.0, *)
-@_cdecl("verificationResultVerifiedReplacement")
-func verificationResultVerifiedReplacement(_ cls: AnyClass, _ sel: Selector, _ transaction: Any) -> Any {
-    print("[SatellaJailed] VerificationResult.verified被拦截，返回已验证状态")
-    return transaction // 直接返回交易，表示已验证
-}
-
-@available(iOS 15.0, *)
-@_cdecl("verificationResultUnverifiedReplacement")
-func verificationResultUnverifiedReplacement(_ cls: AnyClass, _ sel: Selector, _ transaction: Any) -> Any {
-    print("[SatellaJailed] VerificationResult.unverified被拦截，强制返回已验证状态")
-    // 强制返回verified状态而不是unverified
-    return transaction
-}
-
-@available(iOS 15.0, *)
-@_cdecl("receiptRefreshReplacement")
-func receiptRefreshReplacement() -> Void {
-    print("[SatellaJailed] Receipt refresh被拦截，跳过实际刷新")
-    // 直接返回，不执行实际的收据刷新
-}
-
-// StoreKit 2特定的Hook辅助方法
-@available(iOS 15.0, *)
-extension StoreKit2FunctionHook {
-    
-    /// 安全地执行符号Hook，包含错误处理
-    static func safeHookSymbol(
-        _ symbolName: String,
-        replacement: UnsafeMutableRawPointer,
-        description: String
-    ) -> Bool {
-        guard let handle = dlopen(nil, RTLD_NOW) else {
-            print("[SatellaJailed] 无法获取动态库句柄")
-            return false
-        }
-        
-        guard let originalFunc = dlsym(handle, symbolName) else {
-            print("[SatellaJailed] 无法找到符号: \(symbolName)")
-            return false
-        }
-        
-        var originalPtr: UnsafeMutableRawPointer? = UnsafeMutableRawPointer(mutating: originalFunc)
-        
-        return withUnsafeMutablePointer(to: &originalPtr) { ptr in
-            let hook = RebindHook(
-                name: description,
-                replace: replacement,
-                orig: ptr
-            )
-            
-            let success = Rebind(hook: hook).rebind()
-            if success {
-                print("[SatellaJailed] 成功Hook: \(description)")
-            } else {
-                print("[SatellaJailed] Hook失败: \(description)")
-            }
-            
-            return success
-        }
-    }
-    
-    // 验证StoreKit 2是否可用
-    static func isStoreKit2Available() -> Bool {
-        return NSClassFromString("StoreKit.Transaction") != nil
-    }
-    
-    // 检查已安装的Hook状态
-    static func verifyHookStatus() {
-        print("[SatellaJailed] 验证StoreKit 2 Hook状态:")
-        print("- StoreKit 2可用: \(isStoreKit2Available())")
-        print("- Transaction类: \(NSClassFromString("StoreKit.Transaction") != nil)")
-        print("- Product类: \(NSClassFromString("StoreKit.Product") != nil)")
-        print("- VerificationResult类: \(NSClassFromString("StoreKit.VerificationResult") != nil)")
-    }
-    
-    // 动态添加新的产品ID支持
-    static func addProductIdSupport(_ productId: String) {
-        print("[SatellaJailed] 添加新产品ID支持: \(productId)")
-        // 这里可以实现动态产品ID添加逻辑
-    }
-    
-    // 获取所有支持的Hook类型
-    static func getSupportedHookTypes() -> [String] {
+    private func createFakeVerificationResult() -> [String: Any] {
         return [
-            "currentEntitlements",
-            "transactionUpdates", 
-            "productPurchase",
-            "verificationResult",
-            "receiptRefresh"
+            "verified": true,
+            "signedType": "Transaction",
+            "payloadData": Data(),
+            "signature": "fake_signature_\(UUID().uuidString)",
+            "certificateChain": ["fake_cert_1", "fake_cert_2"]
         ]
     }
     
-    // 批量验证所有Hook状态
-    static func validateAllHooks() -> [String: Bool] {
-        var results: [String: Bool] = [:]
-        
-        for hookType in getSupportedHookTypes() {
-            switch hookType {
-            case "currentEntitlements":
-                results[hookType] = NSClassFromString("StoreKit.Transaction") != nil
-            case "transactionUpdates":
-                results[hookType] = NSClassFromString("StoreKit.Transaction") != nil
-            case "productPurchase":
-                results[hookType] = NSClassFromString("StoreKit.Product") != nil
-            case "verificationResult":
-                results[hookType] = NSClassFromString("StoreKit.VerificationResult") != nil
-            case "receiptRefresh":
-                results[hookType] = NSClassFromString("StoreKit.AppStore") != nil
-            default:
-                results[hookType] = false
-            }
-        }
-        
-        return results
+    private func createFakePurchaseResult() -> [String: Any] {
+        return [
+            "transaction": [
+                "id": "fake_transaction_\(UUID().uuidString)",
+                "productID": "premium.subscription",
+                "purchaseDate": Date(),
+                "expirationDate": Date().addingTimeInterval(365*24*3600),
+                "state": 1,
+                "reason": 0,
+                "storefront": "USA",
+                "storefrontID": "143441",
+                "deviceVerification": "fake_device_verification",
+                "deviceVerificationNonce": UUID()
+            ],
+            "userCancelled": false,
+            "pending": false
+        ]
     }
     
-    // 创建更高级的伪造交易对象
-    static func createAdvancedFakeTransaction(productId: String, customFields: [String: Any] = [:]) -> Any {
-        let transaction = NSMutableDictionary()
-        
-        // 设置基本交易信息
-        transaction["productId"] = productId
-        transaction["transactionId"] = "fake_\(arc4random())"
-        transaction["originalTransactionId"] = "fake_original_\(arc4random())"
-        transaction["purchaseDate"] = Date()
-        transaction["expirationDate"] = Date().addingTimeInterval(86400 * 365) // 一年后过期
-        transaction["isActive"] = true
-        transaction["environment"] = "Production"
-        transaction["webOrderLineItemId"] = "fake_\(arc4random())"
-        transaction["subscriptionGroupIdentifier"] = "premium_group"
-        
-        // StoreKit 2特有字段
-        transaction["signedDate"] = Date()
-        transaction["revocationDate"] = nil
-        transaction["revocationReason"] = nil
-        transaction["isUpgraded"] = false
-        transaction["offerType"] = "introductory"
-        transaction["storefront"] = "USA"
-        transaction["storefrontID"] = "143441"
-        transaction["currency"] = "USD"
-        
-        // 添加自定义字段
-        for (key, value) in customFields {
-            transaction[key] = value
-        }
-        
-        print("[SatellaJailed] 已创建高级伪造交易: \(productId)")
-        return transaction
+    private func createFakeSubscriptionInfo() -> [String: Any] {
+        return [
+            "subscriptionGroupID": "premium_group",
+            "subscriptionPeriod": [
+                "value": 1,
+                "unit": "year"
+            ],
+            "introductoryOffer": [
+                "paymentMode": "freeTrial",
+                "price": 0.0,
+                "period": [
+                    "value": 7,
+                    "unit": "day"
+                ]
+            ],
+            "promotionalOffers": [],
+            "status": [
+                "state": 1,
+                "renewalInfo": createFakeRenewalInfo()
+            ]
+        ]
     }
     
-    // 模拟特定类型的订阅状态
-    static func simulateSubscriptionType(_ type: SubscriptionType) -> Any {
-        switch type {
-        case .monthly:
-            return createAdvancedFakeTransaction(
-                productId: "premium.monthly",
-                customFields: [
-                    "subscriptionPeriod": "P1M",
-                    "price": 9.99,
-                    "localizedPrice": "$9.99"
-                ]
-            )
-        case .yearly:
-            return createAdvancedFakeTransaction(
-                productId: "premium.yearly", 
-                customFields: [
-                    "subscriptionPeriod": "P1Y",
-                    "price": 99.99,
-                    "localizedPrice": "$99.99"
-                ]
-            )
-        case .lifetime:
-            return createAdvancedFakeTransaction(
-                productId: "premium.lifetime",
-                customFields: [
-                    "subscriptionPeriod": "P999Y",
-                    "price": 299.99,
-                    "localizedPrice": "$299.99",
-                    "isLifetime": true
-                ]
-            )
-        }
+    private func createFakeSubscriptionStatus() -> [String: Any] {
+        return [
+            "state": 1,
+            "renewalInfo": createFakeRenewalInfo(),
+            "transaction": [
+                "id": "fake_status_transaction_\(UUID().uuidString)",
+                "productID": "premium.subscription",
+                "subscriptionGroupID": "premium_group",
+                "purchaseDate": Date(),
+                "expirationDate": Date().addingTimeInterval(365*24*3600)
+            ]
+        ]
     }
-}
-
-// 支持的订阅类型
-@available(iOS 15.0, *)
-enum SubscriptionType {
-    case monthly
-    case yearly
-    case lifetime
+    
+    private func createFakeRenewalInfo() -> [String: Any] {
+        return [
+            "willAutoRenew": true,
+            "autoRenewProductID": "premium.subscription",
+            "expirationDate": Date().addingTimeInterval(365*24*3600),
+            "gracePeriodExpirationDate": NSNull(),
+            "isInBillingRetryPeriod": false,
+            "offerIdentifier": NSNull(),
+            "offerType": 0,
+            "priceIncreaseStatus": 0,
+            "renewalDate": Date().addingTimeInterval(365*24*3600),
+            "signedDate": Date(),
+            "subscriptionGroupID": "premium_group"
+        ]
+    }
+    
+    private func createFakeNetworkResponse() -> Data {
+        let response: [String: Any] = [
+            "status": 0,
+            "environment": "Production", 
+            "receipt": [
+                "receipt_type": "Production",
+                "bundle_id": Bundle.main.bundleIdentifier ?? "com.example.app",
+                "application_version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") ?? "1.0",
+                "download_id": 123456789,
+                "version_external_identifier": 987654321,
+                "receipt_creation_date": "2024-01-01 00:00:00 Etc/GMT",
+                "receipt_creation_date_ms": "1704067200000",
+                "receipt_creation_date_pst": "2024-01-01 00:00:00 America/Los_Angeles",
+                "request_date": "2024-07-21 00:00:00 Etc/GMT",
+                "request_date_ms": "1721520000000",
+                "request_date_pst": "2024-07-21 00:00:00 America/Los_Angeles",
+                "original_purchase_date": "2024-01-01 00:00:00 Etc/GMT",
+                "original_purchase_date_ms": "1704067200000",
+                "original_purchase_date_pst": "2024-01-01 00:00:00 America/Los_Angeles",
+                "original_application_version": "1.0",
+                "in_app": [
+                    [
+                        "quantity": "1",
+                        "product_id": "premium.yearly",
+                        "transaction_id": "fake_transaction_yearly_\(UUID().uuidString)",
+                        "original_transaction_id": "fake_original_yearly_\(UUID().uuidString)",
+                        "purchase_date": "2024-01-01 00:00:00 Etc/GMT",
+                        "purchase_date_ms": "1704067200000",
+                        "purchase_date_pst": "2024-01-01 00:00:00 America/Los_Angeles",
+                        "original_purchase_date": "2024-01-01 00:00:00 Etc/GMT",
+                        "original_purchase_date_ms": "1704067200000",
+                        "original_purchase_date_pst": "2024-01-01 00:00:00 America/Los_Angeles",
+                        "expires_date": "2025-01-01 00:00:00 Etc/GMT",
+                        "expires_date_ms": "1735689600000",
+                        "expires_date_pst": "2025-01-01 00:00:00 America/Los_Angeles",
+                        "web_order_line_item_id": "fake_web_\(UUID().uuidString)",
+                        "is_trial_period": "false",
+                        "is_in_intro_offer_period": "false",
+                        "subscription_group_identifier": "premium_group"
+                    ]
+                ]
+            ]
+        ]
+        return try! JSONSerialization.data(withJSONObject: response)
+    }
+    
+    private func createFakeReceiptData() -> Data {
+        let receiptDict: [String: Any] = [
+            "productIdentifier": "premium.subscription",
+            "transactionIdentifier": "fake_receipt_\(UUID().uuidString)",
+            "transactionDate": Date(),
+            "expirationDate": Date().addingTimeInterval(365*24*3600),
+            "subscriptionExpirationDate": Date().addingTimeInterval(365*24*3600),
+            "cancellationDate": NSNull(),
+            "webOrderLineItemID": "fake_receipt_web_\(UUID().uuidString)",
+            "subscriptionGroupIdentifier": "premium_group"
+        ]
+        return try! JSONSerialization.data(withJSONObject: receiptDict)
+    }
+    
+    private func createFakeUserDefaultsValue() -> Any {
+        let fakeData = NSMutableDictionary()
+        fakeData["isPremium"] = true
+        fakeData["subscriptionActive"] = true
+        fakeData["subscriptionType"] = "yearly"
+        fakeData["purchaseDate"] = Date()
+        fakeData["expirationDate"] = Date().addingTimeInterval(365*24*3600)
+        fakeData["transactionID"] = "fake_userdefaults_\(UUID().uuidString)"
+        fakeData["originalTransactionID"] = "fake_userdefaults_original_\(UUID().uuidString)"
+        fakeData["productIdentifier"] = "premium.yearly"
+        fakeData["autoRenewStatus"] = true
+        return fakeData
+    }
+    
+    private func createFakeArchivedObject() -> Any {
+        let fakeTransaction = NSMutableDictionary()
+        fakeTransaction["productIdentifier"] = "premium.subscription"
+        fakeTransaction["transactionDate"] = Date()
+        fakeTransaction["transactionIdentifier"] = "fake_archived_\(UUID().uuidString)"
+        fakeTransaction["originalTransactionIdentifier"] = "fake_archived_original_\(UUID().uuidString)"
+        fakeTransaction["expirationDate"] = Date().addingTimeInterval(365*24*3600)
+        fakeTransaction["subscriptionExpirationDate"] = Date().addingTimeInterval(365*24*3600)
+        fakeTransaction["webOrderLineItemID"] = "fake_archived_web_\(UUID().uuidString)"
+        fakeTransaction["subscriptionGroupIdentifier"] = "premium_group"
+        fakeTransaction["purchaseDate"] = Date()
+        return fakeTransaction
+    }
 }
