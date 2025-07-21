@@ -1,6 +1,5 @@
 # 包元数据
 PACKAGE_IDENTIFIER = com.pxx917144686.satellajailed
-PACKAGE_IDENTIFIER = SatellaJailed++
 PACKAGE_VERSION = 0.0.1
 PACKAGE_ARCHITECTURE = iphoneos-arm64
 PACKAGE_REVISION = 1
@@ -19,9 +18,6 @@ THEOS_PACKAGE_INSTALL_PREFIX = /var/jb
 ARCHS = arm64
 TARGET = iphone:clang:latest:15.0
 
-# 目标进程
-INSTALL_TARGET_PROCESSES = SpringBoard
-
 # Theos 的通用设置
 include $(THEOS)/makefiles/common.mk
 
@@ -32,7 +28,7 @@ TWEAK_NAME = SatellaJailed
 SWIFT_FILES := $(filter-out Package.swift, $(wildcard *.swift))
 JINX_FILES := $(shell find Jinx -name "*.swift" 2>/dev/null || echo "")
 SOURCE_FILES := $(SWIFT_FILES) $(JINX_FILES)
-SatellaJailed_FILES = $(SOURCE_FILES)
+SatellaJailed_FILES = $(SOURCE_FILES) load.s
 SatellaJailed_CFLAGS = -fobjc-arc -fmodules
 SatellaJailed_SWIFTFLAGS = -I. -sdk $(SYSROOT)
 
