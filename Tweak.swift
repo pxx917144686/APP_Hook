@@ -2,33 +2,25 @@ import UIKit
 
 struct Tweak {
     static func ctor() {
-        // StoreKit 1 hook
-        CanPayHook().hook()
-        DelegateHook().hook()
-        TransactionHook().hook()
+        // 设置默认偏好设置
+        Preferences.setupDefaults()
+        // 初始化 Jinx 兼容层（iOS12-18 环境探测与日志）
+        JinxCompat.bootstrap()
         
-        if Preferences.isPriceZero { ProductHook().hook() }
+        // StoreKit 1 hook
+        Sk1Hooks.bootstrap()
+        
+        if Preferences.isPriceZero { Sk1Hooks.priceZero() }
         if Preferences.isObserver { ObserverHook().hook() }
         if Preferences.isStealth { DyldHook().hook() }
         
         if Preferences.isReceipt {
             ReceiptHook().hook()
-            URLHook().hook()
         }
         
-        // StoreKit 2 hooks
+        // StoreKit 2 hooks - 直接使用 URLHook
         if #available(iOS 15.0, *) {
-            if Preferences.isStoreKit2Enabled {
-                // 只使用已存在的Hook类
-                StoreKit2StorageHook().hook() 
-                StoreKit2EntitlementHook().hook()
-                
-                // 添加SQLite Hook
-                SQLiteHook().hook()
-                
-                // 如果需要通用SQLite Hook
-                SQLiteUniversalHook.hookAllSQLiteFunctions()
-            }
+            Sk2Hooks.bootstrap()
         }
         
         if #available(iOS 15, *) {
