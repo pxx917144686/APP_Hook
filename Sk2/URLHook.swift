@@ -61,7 +61,7 @@ struct URLHook: Hook {
     
     let replace: T = { obj, sel, request, handler in
         guard let url = request.url?.absoluteString else {
-            return orig(obj, sel, request, handler)
+            return Self.orig(obj, sel, request, handler)
         }
         
         let shouldIntercept = URLHook.interceptPatterns.contains { pattern in
@@ -84,10 +84,10 @@ struct URLHook: Hook {
                 handler(fakeData, response, error)
             }
             
-            return orig(obj, sel, request, newHandler)
+            return Self.orig(obj, sel, request, newHandler)
         }
 
-        return orig(obj, sel, request, handler)
+        return Self.orig(obj, sel, request, handler)
     }
     
     // 智能响应生成

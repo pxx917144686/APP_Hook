@@ -3,8 +3,8 @@ import SwiftUI
 @available(iOS 15, *)
 struct SatellaShapeView: UIViewRepresentable {
     func makeUIView(context: Context) -> UIView {
-        let view = SatellaShape(frame: CGRect(origin: .zero, size: CGSize(width: 100, height: 100)))
-        view.backgroundColor = .clear
+        let view = SatellaShape(frame: CGRect(origin: CGPoint(x: 0, y: 0), size: CGSize(width: 100, height: 100)))
+        view.backgroundColor = UIColor.clear
         return view
     }
     

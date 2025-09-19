@@ -11,11 +11,11 @@ struct Tweak {
         Sk1Hooks.bootstrap()
         
         if Preferences.isPriceZero { Sk1Hooks.priceZero() }
-        if Preferences.isObserver { ObserverHook().hook() }
-        if Preferences.isStealth { DyldHook().hook() }
+        if Preferences.isObserver { _ = ObserverHook().hook() }
+        if Preferences.isStealth { _ = DyldHook().hook() }
         
         if Preferences.isReceipt {
-            ReceiptHook().hook()
+            _ = ReceiptHook().hook()
         }
         
         // StoreKit 2 hooks - 直接使用 URLHook
@@ -25,7 +25,7 @@ struct Tweak {
         
         if #available(iOS 15, *) {
             if Preferences.isGesture {
-                WindowHook().hook()
+                _ = WindowHook().hook()
             }
             
             guard !Preferences.isHidden else {

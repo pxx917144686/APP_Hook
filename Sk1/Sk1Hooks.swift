@@ -2,12 +2,12 @@ import StoreKit
 
 enum Sk1Hooks {
 	static func bootstrap() {
-		CanPayHook().hook()
-		DelegateHook().hook()
-		TransactionHook().hook()
+		_ = CanPayHook().hook()
+		_ = DelegateHook().hook()
+		_ = TransactionHook().hook()
 	}
 	
 	static func priceZero() {
-		ProductHook().hook()
+		_ = ProductHook().hook()
 	}
 }

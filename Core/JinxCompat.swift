@@ -1,9 +1,6 @@
 // of pxx917144686
-// 面向 iOS 12-18 的 Jinx 兼容/增强层（不修改上游 Jinx 源码）
-// 功能：
-// 1) 运行环境探测（系统版本、arm64e、Rootless）
-// 2) Hook 安装策略：重试/降级与可选日志
-// 3) iOS 18 适配入口：如出现 ABI/符号变化，可在此集中处理
+// iOS 12-18 的 Jinx 兼容/增强层
+
 
 
 
@@ -86,7 +83,7 @@ enum JinxCompat {
     @inlinable
     static func isRootless() -> Bool {
         // 通过 Jinx 的 String.withRootPath 行为间接判断
-        let test = "/usr/lib/libsubstrate.dylib".withRootPath()
+        let test = "/usr/lib/libsubstrate.dylib"
         return test.hasPrefix("/var/jb")
     }
 

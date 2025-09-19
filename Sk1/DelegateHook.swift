@@ -8,7 +8,7 @@ struct DelegateHook: Hook {
     let replace: T = { obj, sel, delegate in
         let tella: SatellaDelegate = .shared
         tella.delegates.append(delegate)
-        orig(obj, sel, tella)
+        Self.orig(obj, sel, tella)
     }
 }
 

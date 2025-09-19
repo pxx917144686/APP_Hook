@@ -5,21 +5,13 @@ final class SatellaShape: UIView {
     override func draw(_ rect: CGRect) {
         let size: CGSize = rect.size
 
-        let bodyPath = UIBezierPath(ovalIn: CGRect(
-            x: size.width * 0.3,
-            y: size.height * 0.25,
-            width: size.width * 0.4,
-            height: size.height * 0.5
-        ))
+        let bodyRect = CGRect(origin: CGPoint(x: size.width * 0.3, y: size.height * 0.25), size: CGSize(width: size.width * 0.4, height: size.height * 0.5))
+        let bodyPath = UIBezierPath(ovalIn: bodyRect)
         UIColor.systemGreen.setFill()
         bodyPath.fill()
         
-        let headPath = UIBezierPath(ovalIn: CGRect(
-            x: size.width * 0.35,
-            y: size.height * 0.15,
-            width: size.width * 0.3,
-            height: size.height * 0.25
-        ))
+        let headRect = CGRect(origin: CGPoint(x: size.width * 0.35, y: size.height * 0.15), size: CGSize(width: size.width * 0.3, height: size.height * 0.25))
+        let headPath = UIBezierPath(ovalIn: headRect)
         UIColor.systemGreen.setFill()
         headPath.fill()
         
@@ -57,21 +49,13 @@ final class SatellaShape: UIView {
             legPath.stroke()
         }
 
-        let leftEye = UIBezierPath(ovalIn: CGRect(
-            x: size.width * 0.42,
-            y: size.height * 0.22,
-            width: size.width * 0.06,
-            height: size.height * 0.06
-        ))
+        let leftEyeRect = CGRect(origin: CGPoint(x: size.width * 0.42, y: size.height * 0.22), size: CGSize(width: size.width * 0.06, height: size.height * 0.06))
+        let leftEye = UIBezierPath(ovalIn: leftEyeRect)
         UIColor.black.setFill()
         leftEye.fill()
         
-        let rightEye = UIBezierPath(ovalIn: CGRect(
-            x: size.width * 0.52,
-            y: size.height * 0.22,
-            width: size.width * 0.06,
-            height: size.height * 0.06
-        ))
+        let rightEyeRect = CGRect(origin: CGPoint(x: size.width * 0.52, y: size.height * 0.22), size: CGSize(width: size.width * 0.06, height: size.height * 0.06))
+        let rightEye = UIBezierPath(ovalIn: rightEyeRect)
         UIColor.black.setFill()
         rightEye.fill()
     }

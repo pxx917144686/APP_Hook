@@ -7,7 +7,7 @@ struct WindowHook: Hook {
     let cls: AnyClass? = UIWindow.self
     let sel: Selector = #selector(UIWindow.becomeKey)
     let replace: T = { obj, sel in
-        orig(obj, sel)
+        Self.orig(obj, sel)
         
         guard !SatellaController.shared.windows.contains(obj) else {
             return

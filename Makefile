@@ -1,41 +1,48 @@
-# 包元数据
-PACKAGE_IDENTIFIER = com.pxx917144686.app-hook
-PACKAGE_VERSION = 0.0.2
-PACKAGE_ARCHITECTURE = iphoneos-arm64
-PACKAGE_REVISION = 1
-PACKAGE_SECTION = Tweaks
-PACKAGE_DEPENDS = firmware (>= 15.0), mobilesubstrate
-PACKAGE_DESCRIPTION = APP_Hook
-
-# 直接输出到根路径
-export THEOS_PACKAGE_DIR = $(CURDIR)
+export DEBUG = 0
+export THEOS_STRICT_LOGOS = 0
+export ERROR_ON_WARNINGS = 0
+export LOGOS_DEFAULT_GENERATOR = internal
 
 # Rootless 插件配置
 export THEOS_PACKAGE_SCHEME = rootless
 THEOS_PACKAGE_INSTALL_PREFIX = /var/jb
 
+# 直接输出到根路径
+export THEOS_PACKAGE_DIR = $(CURDIR)
+
+# 设置工具路径
+export PATH := $(CURDIR):$(PATH)
+
 # TARGET
 ARCHS = arm64
 TARGET = iphone:clang:latest:15.0
-
-# Theos 的通用设置
+# 引入 Theos 的通用设置
 include $(THEOS)/makefiles/common.mk
 
-# 插件名
+# 插件名称
 TWEAK_NAME = APP_hook
 
-# 源文件（支持分目录）
-SWIFT_ROOT := $(filter-out Package.swift, $(wildcard *.swift))
-SWIFT_SK1  := $(shell find Sk1 -name "*.swift" 2>/dev/null)
-SWIFT_SK2  := $(shell find Sk2 -name "*.swift" 2>/dev/null)
-SWIFT_CORE := $(shell find Core -name "*.swift" 2>/dev/null)
-SWIFT_UI   := $(shell find UI -name "*.swift" 2>/dev/null)
-SWIFT_MODELS := $(shell find Models -name "*.swift" 2>/dev/null)
-JINX_FILES := $(shell find Jinx -name "*.swift" 2>/dev/null | grep -v Package.swift)
-SOURCE_FILES := $(SWIFT_ROOT) $(SWIFT_SK1) $(SWIFT_SK2) $(SWIFT_CORE) $(SWIFT_UI) $(SWIFT_MODELS) $(JINX_FILES)
-APP_hook_FILES = $(SOURCE_FILES) load.s
-APP_hook_CFLAGS = -fobjc-arc -fmodules
-APP_hook_SWIFTFLAGS = -I. -sdk $(SYSROOT)
+# 源代码文件
+SWIFT_SOURCES = $(shell find . -name "*.swift" -not -name "Package.swift")
+$(TWEAK_NAME)_FILES = load.s $(SWIFT_SOURCES)
 
-# Theos 插件规则
+# 编译标志
+$(TWEAK_NAME)_CFLAGS = -fobjc-arc -w
+$(TWEAK_NAME)_CFLAGS += -Wno-everything
+$(TWEAK_NAME)_CFLAGS += -Wno-incomplete-implementation
+$(TWEAK_NAME)_CFLAGS += -Wno-protocol
+
+# Swift编译
+$(TWEAK_NAME)_SWIFTFLAGS = -I. -sdk $(THEOS)/sdks/iPhoneOS15.6.sdk/
+$(TWEAK_NAME)_SWIFTFLAGS += -Xfrontend -disable-implicit-string-processing-module-import
+
 include $(THEOS_MAKE_PATH)/tweak.mk
+.PHONY: build-only
+build-only:
+	@echo "开始构建APP_hook.dylib（跳过签名和打包）..."
+	@make --no-print-directory internal-tweak-compile
+	@echo "构建完成！dylib文件位于：$(THEOS_OBJ_DIR)/debug/$(TWEAK_NAME).dylib"
+.PHONY: build-spm
+build-spm:
+	@echo "使用Swift Package Manager构建..."
+	swift build -c release -Xswiftc -target -Xswiftc arm64-apple-ios15.0

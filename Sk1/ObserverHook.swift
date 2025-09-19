@@ -8,6 +8,6 @@ struct ObserverHook: Hook {
     let replace: T = { obj, sel, observer in
         let tella: SatellaObserver = .shared
         tella.observers.append(observer)
-        orig(obj, sel, tella)
+        Self.orig(obj, sel, tella)
     }
 }
