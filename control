@@ -1,5 +1,5 @@
-Package: com.pxx917144686.satellajailed
-Name: SatellaJailed++
+Package: com.pxx917144686.app_hook
+Name: APP_Hook
 Version: 0.0.2
 Architecture: iphoneos-arm64
 Description: Tweaks

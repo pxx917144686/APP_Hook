@@ -9,6 +9,8 @@
 
 <img width="1154" height="888" alt="x" src="https://github.com/user-attachments/assets/736cb247-cc0a-4176-a93b-187d625a8a5b" />
 
+
+
 ## 项目结构
 
 ### 核心入口
@@ -16,21 +18,29 @@
 
 ### Core/ - 核心运行时框架
 - `DyldHook.swift` - 动态库名伪装 Hook
+- `JinxCompat.swift` - Jinx 框架兼容层
 
 ### Jinx/ - Jinx Hook 框架 (已集成)
-- `Hook.swift` - Hook 基础协议定义
-- `HookFunc.swift` - 函数 Hook 协议
-- `HookGroup.swift` - Hook 组协议
-- `Replace.swift` - 方法替换实现
-- `Storage.swift` - 运行时存储管理
-- `Lock.swift` - 线程安全锁机制
-- `Ivar.swift` - 运行时变量操作
-- `Rebind.swift` - 底层重绑定工具
-- `RebindHook.swift` - 符号重绑定 Hook
-- `Substrate.swift` - Substrate 兼容层
-- `Table.swift` - 符号表处理
-- `String.swift` - 字符串扩展工具
-- `JinxPreferences.swift` - 配置文件读取
+- `Package.swift` - Swift 包管理配置
+- `Sources/Jinx/` - Jinx 框架源码
+  - `Core/` - 核心功能
+    - `Rebind.swift` - 底层重绑定工具
+    - `Replace.swift` - 方法替换实现
+    - `Substrate.swift` - Substrate 兼容层
+  - `Protocols/` - 协议定义
+    - `Hook.swift` - Hook 基础协议定义
+    - `HookFunc.swift` - 函数 Hook 协议
+    - `HookGroup.swift` - Hook 组协议
+  - `Types/` - 类型定义
+    - `RebindHook.swift` - 符号重绑定 Hook
+    - `Table.swift` - 符号表处理
+  - `Helpers/` - 辅助工具
+    - `Ivar.swift` - 运行时变量操作
+    - `JinxPreferences.swift` - 配置文件读取
+    - `Lock.swift` - 线程安全锁机制
+    - `Storage.swift` - 运行时存储管理
+  - `Extensions/` - 扩展功能
+    - `String.swift` - 字符串扩展工具
 
 ### Sk1/ - StoreKit 1 Hook 模块
 - `Sk1Hooks.swift` - SK1 Hook 统一入口
@@ -45,19 +55,21 @@
 
 ### Sk2/ - StoreKit 2 Hook 模块 (iOS 15.0+)
 - `Sk2Hooks.swift` - SK2 Hook 统一入口
-- `SimpleStoreKit2Hook.swift` - 简化的 StoreKit 2 Hook
-  - 试用资格检查 Hook
-  - 订阅状态 Hook
-  - 交易验证 Hook
 - `URLHook.swift` - 网络验证拦截 Hook
   - Apple 官方验证端点拦截
   - StoreKit 2 App Store Server API 拦截
   - 第三方验证服务拦截
+  - 智能 API 类型识别和处理
+    - 订阅状态 API 处理
+    - 用户信息 API 处理
+    - 收据验证 API 处理
+    - VIP 状态 API 处理
+    - GraphQL API 处理
+  - 应用类型分类处理
+    - 音频应用处理
+    - 生产力应用处理
+    - 教育应用处理
   - 收据验证请求伪造
-- `SQLiteHook.swift` - SQLite 数据库 Hook
-  - StoreKit 数据库操作拦截
-  - 本地存储伪造
-  - 交易数据注入
 
 ### UI/ - 用户界面模块
 - `SatellaView.swift` - 主控制界面
@@ -89,5 +101,13 @@
 
 
 ## 编译
-- `cd APP_hook文件夹`
-- `make clean && make package`
+
+### 编译步骤
+```bash
+# 进入项目目录
+cd APP_Hook
+
+# 清理并编译
+make clean && make package
+
+```
